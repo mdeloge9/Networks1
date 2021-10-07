@@ -1,6 +1,8 @@
 ---
 title: "Networks1 rmd"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 ```{r setup, include=FALSE}
@@ -270,7 +272,7 @@ st_geometry(transit_access2) <- "geometry"
 
 ggplot(transit_access2) +
   geom_sf(aes(fill = accessibility), color = NA) +
-  scale_fill_turbo_c( name = "Accessiblity score") +
+  scale_fill_viridis_c( name = "Accessiblity score") +
   coord_sf(crs = MD_state_plane) +
   theme_void()
 ```
