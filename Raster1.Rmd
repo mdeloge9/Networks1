@@ -1,0 +1,101 @@
+---
+title: "Rasters1"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+```{r}
+library(stars)
+library(sf)
+library(tidyverse)
+library(osmextract)
+library(tigris)
+```
+```{r}
+access_poly <- st_read("DC_access.geojson", quiet=TRUE)
+
+access_raster <- st_rasterize(access_poly["accessibility"], 
+                              nx = 100, ny = 100) 
+plot(access_raster)
+```
+```{r}
+DC_city_limits <- places("Washington") %>%
+  filter(NAME == "District of Columbia") 
+
+DC_file <- oe_match("District of Columbia", quiet = TRUE)
+
+DC_streets <- oe_read(DC_file$url, 
+                   provider = "openstreetmap_fr", 
+                   download_directory = "networks", 
+                   layer = "lines", 
+                   quiet = TRUE) %>%
+  filter(!is.na(highway)) %>%
+  st_transform(crs = st_crs(DC_city_limits)) %>%
+  st_filter(DC_city_limits)
+
+ggplot(DC_streets) +
+  geom_stars(data = access_raster) +
+  geom_sf(color = "white", alpha = 0.1) +
+  scale_fill_viridis_c(na.value = NA, 
+                       option="A",
+                       name = "Pedestrian access to\ntransit stops") +
+  theme_void()
+```
+```{r}
+access_points <- st_as_sf(access_raster, as_points = TRUE)
+
+ggplot(DC_streets) +
+  geom_sf(data = access_points, aes(color = accessibility), size = 0.1) +
+  scale_color_viridis_c(na.value = NA, 
+                       option="A",
+                       name = "Pedestrian access to\ntransit stops") +
+  theme_void()
+```
+
+```{r}
+access_poly2 <- st_as_sf(access_raster, as_points = FALSE, merge = TRUE)
+
+ggplot(DC_streets) +
+  geom_sf(data = access_poly2, aes(fill = accessibility), color = 'gray') +
+  scale_fill_viridis_c(na.value = NA, 
+                       option="A",
+                       name = "Pedestrian access to\ntransit stops") +
+  theme_void()
+```
+```{r}
+access_contours <- st_contour(access_raster, contour_lines = TRUE, 
+                              breaks = c(0,2,4,6,8))
+
+ggplot(DC_streets) +
+  geom_sf(color = "gray") +
+  geom_sf(data = access_contours, aes(color = accessibility), fill = NA) +
+  scale_color_viridis_c(na.value = NA, 
+                       option="A",
+                       breaks = c(0,2,4,6,8),
+                       name = "Pedestrian access to\ntransit stops") +
+  theme_void()
+```
+

@@ -1,0 +1,286 @@
+---
+title: "Networks1 rmd"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+options(java.parameters = "-Xmx2G")
+
+library(r5r)
+library(osmextract)
+library(tidyverse)
+library(sf)
+library(ggthemes)
+library(ggspatial)
+library(tigris)
+library(wesanderson)
+library(tidytransit)
+```
+
+
+```{r}
+dir.create("networks")
+
+download.file("https://transitfeeds.com/p/wmata/75/latest/download", file.path("networks","DCgtfs.zip"), mode = "wb", quiet=TRUE)
+```
+```{r}
+DC_file <- oe_match("Washington, District of Columbia")
+
+```
+```{r}
+DC_streets <- oe_read(DC_file$url, 
+                   provider = "openstreetmap_fr", 
+                   download_directory = "networks", 
+                   layer = "lines", 
+                   quiet = TRUE) %>%
+  filter(!is.na(highway)) 
+```
+###Hello!!!###
+```{r}
+ggplot(DC_streets) +
+  geom_sf()
+```
+```{r}
+MD_state_plane <- "+proj=lcc +lat_1=39.45 +lat_2=38.3 +lat_0=37.66666666666666 +lon_0=-77 +x_0=399999.9998983998 +y_0=0 +ellps=GRS80 +datum=NAD83 +to_meter=0.3048006096012192 +no_defs"
+
+DC_city_limits <- places("District of Columbia") %>%
+  filter(NAME == "Washington") %>%
+  st_transform(crs = st_crs(DC_streets))
+
+
+DC_streets <- DC_streets[DC_city_limits,]
+
+ggplot(DC_streets) +
+  geom_sf() +
+  coord_sf(crs = MD_state_plane) 
+```
+
+```{r}
+DC_libraries <- oe_read(DC_file$url, 
+                   provider = "openstreetmap_fr", 
+                   download_directory = "networks", 
+                   layer = "points", 
+                   quiet = TRUE) %>%
+  filter(str_detect(other_tags, '"amenity"=>"library"')) %>%
+  st_filter(DC_city_limits) %>%
+  rename(id = osm_id)
+
+ggplot(DC_streets) +
+  geom_sf(color = 'gray') +
+  geom_sf(data = DC_libraries, color = "darkblue") +
+  coord_sf(crs = MD_state_plane)  +
+  theme_void()
+```
+```{r}
+grid <- st_sf(st_make_grid(DC_city_limits, 
+                           square = FALSE, 
+                           n = c(100,100),
+                           what = "polygons")) %>%
+  st_filter(DC_city_limits) 
+
+colnames(grid) <- "geometry"
+st_geometry(grid) <- "geometry"
+
+grid <- grid %>%
+  mutate(id = seq(1, length(grid$geometry), by=1))
+
+grid_points <- st_centroid(grid)
+
+ggplot(grid) +
+  geom_sf() +
+  geom_sf(data = DC_libraries, color = "darkblue") +
+  geom_sf(data = DC_streets, alpha = 0.2) +
+  coord_sf(crs = MD_state_plane) + 
+  theme_map()
+```
+```{r}
+```
+
+
+```{r}
+r5r_core <- setup_r5("networks", verbose = FALSE)
+```
+```{r}
+ttm <- travel_time_matrix(r5r_core = r5r_core,
+                          origins = DC_libraries,
+                          destinations = grid_points,
+                          mode = c("WALK"),
+                          departure_datetime = as.POSIXct("15-03-2020 14:00:00",
+                                 format = "%d-%m-%Y %H:%M:%S"),
+                          max_walk_dist = 1000,
+                          max_trip_duration = 480,
+                          verbose = FALSE)
+```
+```{r}
+tt_wide <- ttm %>%
+  pivot_wider(names_from = fromId, 
+              names_prefix = "from", values_from = travel_time) %>%
+  rename(id = toId) %>% 
+  merge(grid) %>%
+  replace(is.na(.), 999) %>%
+  rowwise() %>%
+  mutate(from_any = min(c_across(starts_with("from")), na.rm = TRUE))
+
+st_geometry(tt_wide) <- "geometry"
+```
+```{r}
+ggplot(DC_streets) +
+  geom_sf(data = tt_wide, 
+          aes(fill = from_any), 
+          color = NA) +
+  geom_sf(alpha = 0.1) +
+  scale_fill_gradient2(low = "green", mid = "yellow", high = "red", 
+                       midpoint = 30,
+        name = "Transit Travel\ntime to the\nnearest library\n(minutes)") +
+  coord_sf(crs = MD_state_plane) +
+ geom_sf(data = DC_libraries, color = "darkblue") +
+   theme_map()
+```
+
+```{r}
+iso_pallete <- wes_palette("Darjeeling1", n = 5)
+
+iso10min <- tt_wide[tt_wide$from_any < 11,] %>%
+  st_union()
+
+iso20min <- tt_wide[tt_wide$from_any < 21,] %>%
+  st_union()
+
+iso30min <- tt_wide[tt_wide$from_any < 31,] %>%
+  st_union()
+
+iso40min <- tt_wide[tt_wide$from_any < 41,] %>%
+  st_union()
+
+iso50min <- tt_wide[tt_wide$from_any < 51,] %>%
+  st_union()
+
+ggplot(DC_streets) +
+  geom_sf(data = iso50min, 
+          aes(fill = "Area within 50 minutes"), 
+          color = NA) +  
+  geom_sf(data = iso40min, 
+          aes(fill = "Area within 40 minutes"), 
+          color = NA) +
+  geom_sf(data = iso30min, 
+          aes(fill = "Area within 30 minutes"), 
+          color = NA) +
+  geom_sf(data = iso20min, 
+          aes(fill = "Area within 20 minutes"), 
+          color = NA) +
+  geom_sf(data = iso10min, 
+          aes(fill = "Area within 10 minutes"), 
+          color = NA) +
+  geom_sf(alpha = 0.1) +
+  scale_fill_manual(values = c(iso_pallete[1],
+                               iso_pallete[2],
+                               iso_pallete[3],
+                               iso_pallete[4],
+                               iso_pallete[5]),
+        name = "Transit Travel\ntime to the\nnearest library\n(minutes)") +
+  coord_sf(crs = MD_state_plane) +
+  theme_map()
+```
+```{r}
+DC_transit <- read_gtfs(file.path("networks", "DCgtfs.zip"))
+
+transit_stops <- st_as_sf(DC_transit$stops, 
+                          coords = c("stop_lon", "stop_lat"), 
+                          crs =st_crs(grid))
+```
+```{r}
+transit_grid <- grid %>%
+  mutate(num_stops = lengths(st_covers(grid, transit_stops)))
+
+transit_points <- st_centroid(transit_grid)
+
+ggplot(transit_points) +
+  geom_sf(aes(color = as.character(num_stops))) +
+  scale_color_manual(values = c("gray", "cornsilk", "lightgreen", "darkgreen", "coral2", "aquamarine1", "cornflowerblue", "cyan", "darkorchid", "goldenrod", "darkorange", "deeppink"), 
+                    name = "Number of\ntransit stops") +
+  theme_void()
+```
+```{r}
+transit_access <- accessibility(r5r_core,
+                        origins = transit_points,
+                        destinations = transit_points,
+                        mode = "WALK",
+                        opportunities_colname = "num_stops",
+                        decay_function = "step",
+                        cutoffs = 6,
+                        departure_datetime = as.POSIXct("15-03-2020 14:00:00",
+                                 format = "%d-%m-%Y %H:%M:%S"),
+                        max_walk_dist = 500,
+                        time_window = 60,
+                        percentiles = 50,
+                        verbose = FALSE) %>%
+  mutate(id = as.numeric(from_id)) %>%
+  merge(grid)
+
+st_geometry(transit_access) <- "geometry"
+
+ggplot(transit_access) +
+  geom_sf(aes(fill = accessibility), color = NA) +
+  scale_fill_viridis_c(name = "Transit stops\nwithin 5-minutes\nwalk") +
+  coord_sf(crs = MD_state_plane) +
+  theme_void()
+```
+
+```{r}
+transit_access2 <- accessibility(r5r_core,
+                        origins = transit_points,
+                        destinations = transit_points,
+                        mode = "WALK",
+                        opportunities_colname = "num_stops",
+                        decay_function = "exponential",
+                        cutoffs = 5,
+                        departure_datetime = as.POSIXct("15-03-2020 14:00:00",
+                                 format = "%d-%m-%Y %H:%M:%S"),
+                        max_walk_dist = 500,
+                        time_window = 60,
+                        percentiles = 50,
+                        verbose = FALSE) %>%
+  mutate(id = as.numeric(from_id)) %>%
+  merge(grid)
+
+st_geometry(transit_access2) <- "geometry"
+
+ggplot(transit_access2) +
+  geom_sf(aes(fill = accessibility), color = NA) +
+  scale_fill_turbo_c( name = "Accessiblity score") +
+  coord_sf(crs = MD_state_plane) +
+  theme_void()
+```
+```{r}
+stop_r5(r5r_core)
+```
+```{r}
+rJava::.jgc(R.gc = TRUE)
+```
+```{r}
+st_write(transit_access2, 'DC_access.geojson', append=FALSE, quiet=TRUE )
+```
+
